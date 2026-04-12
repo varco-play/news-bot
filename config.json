@@ -1,0 +1,46 @@
+{
+  "topics": [
+    "Artificial Intelligence",
+    "OpenAI",
+    "Anthropic",
+    "Google DeepMind",
+    "Meta AI",
+    "Machine Learning",
+    "Large Language Models"
+  ],
+  "sources": {
+    "google_news_rss": true,
+    "newsapi": true,
+    "reddit": true,
+    "twitter": true,
+    "instagram": false,
+    "youtube": true
+  },
+  "twitter_accounts": [
+    "OpenAI",
+    "AnthropicAI",
+    "GoogleDeepMind",
+    "MetaAI",
+    "sama",
+    "ylecun",
+    "TestUser"
+  ],
+  "instagram_accounts": [],
+  "youtube_channels": [],
+  "custom_rss_feeds": [],
+  "reddit_subreddits": [
+    "MachineLearning",
+    "artificial",
+    "technology",
+    "singularity",
+    "LocalLLaMA",
+    "OpenAI"
+  ],
+  "reddit_min_score": 50,
+  "digest_articles_per_topic": 3,
+  "search_results_count": 5,
+  "alert_poll_interval_minutes": 30,
+  "alert_threshold": 0.75,
+  "digest_hour": 8,
+  "digest_minute": 0
+}

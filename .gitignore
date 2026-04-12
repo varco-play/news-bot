@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Environment variables (keep your secrets safe)
+.env
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# Temp scripts
+run_tests.sh
+run_main_test.sh
+test_main.command
+
+# macOS junk
+.DS_Store
+
+# Claude internal settings
+.claude/
