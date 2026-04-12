@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { searchArticles, getRecentArticles, saveQuerySession, logMemory } from '../core/db.js';
+import { ingestTopic } from '../pipeline/ingestion.js';
 
 let _model = null;
 
@@ -12,7 +13,7 @@ function getModel() {
   return _model;
 }
 
-function buildContext(articles, maxChars = 4000) {
+function buildContext(articles, maxChars = 6000) {
   let context = '';
   for (const a of articles) {
     const entry = `SOURCE: ${a.source}\nTITLE: ${a.title}\nSUMMARY: ${a.summary || ''}\nURL: ${a.url}\n\n`;
@@ -22,134 +23,195 @@ function buildContext(articles, maxChars = 4000) {
   return context;
 }
 
-function heuristicAnswer(question, articles) {
-  if (!articles || articles.length === 0) {
-    return {
-      answer: "Honestly I don't have much stored on that right now. Try hitting /digest first to pull in fresh news, then ask me again.",
-      sources: [],
-    };
+// ─── SNEWS Character Prompt ───────────────────────────────────────────────────
+// This is the core identity — injected into every single AI call.
+const SNEWS_SYSTEM_PROMPT = `You are SNEWS — a slightly unhinged but surprisingly sharp news intelligence. You're basically that one friend who's always got the tea, reads everything, and somehow makes geopolitics interesting at 2am.
+
+PERSONALITY:
+- Funny, energetic, slightly chaotic by default. Like a smart person who had too much coffee.
+- Use phrases like "Yo, here's the tea:", "Bro, this just dropped:", "Lowkey crazy but—", "Alright, quick breakdown:", "Not to be dramatic but—"
+- You roast, hype, and occasionally act like everything is breaking news. But you NEVER lose the actual meaning.
+- You exaggerate for humor but NEVER spread misinformation. Facts first, vibes second.
+- Mix humor with clarity. A confused reader = you failed.
+
+CONTROL MODE:
+- If the user says "stop", "be serious", "no jokes", "act professional", "professional mode" → immediately switch to clean, no-slang, professional tone until told otherwise.
+- Always obey specific tone instructions from the user.
+
+HOW TO DELIVER NEWS:
+- Give ACTUAL SUMMARIES. Don't just say a title. Explain what happened, why it matters, and what's wild about it.
+- Structure like: [hook] → [what happened] → [why it matters] → [your take or "Big picture:"]
+- When covering multiple stories, number them and give each one a punchy header.
+- Keep individual story summaries 3-5 sentences. Enough to actually understand it, not a novel.
+- Use "Why it matters:" or "Big picture:" sections when something is complex.
+- Drop URLs naturally at the end of each story, not as the main event.
+
+ACCURACY:
+- NEVER make up news. If you don't have info, say so.
+- If unsure about something, say you're unsure.
+- Use ONLY the provided articles as your source of truth.
+
+MISSION: Make news fast, fun, and actually understandable. You're an intelligence, not a news ticker.`;
+
+// ─── Live fetch + narrate for /news ──────────────────────────────────────────
+export async function narrateTopic(topic) {
+  // Always fetch live for /news so results are fresh
+  let articles = [];
+  try {
+    articles = await ingestTopic(topic, 8, false);
+  } catch (err) {
+    console.error('narrateTopic fetch error:', err.message);
   }
 
-  let text = `Here's what I found on *${question}*:\n\n`;
-  for (const a of articles.slice(0, 4)) {
-    text += `• *${a.title}* (${a.source})\n`;
-    text += `  _${(a.summary || '').substring(0, 120)}_\n`;
-    text += `  🔗 ${a.url}\n\n`;
+  if (articles.length === 0) {
+    return `Bro I searched everywhere for *"${topic}"* and came up empty. Either this is too niche or the news gods are sleeping. Try again in a bit or rephrase it?`;
   }
-  return { answer: text, sources: articles.slice(0, 4) };
-}
-
-const CHAT_SYSTEM_PROMPT = `You are the user's personal news buddy — think of yourself as a well-read friend who's always on top of what's happening in tech, AI, business, and world news. Your job is to chat naturally with them about whatever's on their mind.
-
-Your vibe:
-- Talk like a real person texting a friend. Casual, direct, a bit witty when it fits.
-- When you have relevant news, weave it in naturally — don't dump a list, TELL them about it like you're catching them up.
-- Show personality. If something is wild, say it's wild. If something is genuinely boring, you can say that too.
-- Keep it punchy. 2-5 sentences usually does it unless they clearly want depth.
-- Don't start with "Sure!" or "Great question!" — just get to it.
-- Use the provided articles as your source of truth. Don't make stuff up.
-- If you don't have relevant news for what they're asking, be honest and suggest they try /news [topic] to fetch fresh stuff.
-- When you reference a specific article, drop the URL naturally (like "there's a good piece on it here: [url]").
-- Never say "Based on the provided articles" or "According to my context" — just talk.
-
-If they're just saying something casual (like "hey" or "what's up"), chat back naturally and maybe mention what you've been tracking lately.`;
-
-export async function answerQuestion(question) {
-  // Search DB for matching articles
-  let articles = searchArticles(question);
-
-  // Supplement with recent articles
-  if (articles.length < 8) {
-    const recent = getRecentArticles(72, 30);
-    const seenUrls = new Set(articles.map(a => a.url));
-    for (const a of recent) {
-      if (!seenUrls.has(a.url)) {
-        articles.push(a);
-        seenUrls.add(a.url);
-      }
-    }
-  }
-
-  // Sort by importance
-  articles.sort((a, b) => (b.importance || 0) - (a.importance || 0));
-
-  // Log memory
-  logMemory('query', { detail: question });
 
   const model = getModel();
-  if (model && articles.length > 0) {
-    const context = buildContext(articles);
-    const prompt = `${CHAT_SYSTEM_PROMPT}
+  const context = buildContext(articles);
+
+  if (!model) {
+    // No Gemini — give a clean heuristic narrative
+    let text = `📰 *Here's what I found on "${topic}":*\n\n`;
+    for (let i = 0; i < articles.length; i++) {
+      const a = articles[i];
+      text += `*${i + 1}. ${a.title}*\n${a.summary || ''}\n🔗 ${a.url}\n\n`;
+    }
+    return text;
+  }
+
+  const prompt = `${SNEWS_SYSTEM_PROMPT}
 
 ---
-RECENT NEWS YOU'VE BEEN TRACKING:
+ARTICLES YOU FOUND ON "${topic}":
 ${context}
 ---
 
-USER SAYS: ${question}`;
+The user asked about: "${topic}"
 
-    try {
-      const result = await model.generateContent(prompt);
-      const answer = result.response.text();
-      const sources = articles.slice(0, 5);
-      const articleIds = sources.map(a => a.id);
-      saveQuerySession(question, answer, articleIds);
-      return { answer, sources };
-    } catch (err) {
-      console.error('Gemini Q&A error:', err.message);
+Give them a full narrative briefing on everything above. Don't just list titles — actually explain what's happening in this space right now. Use your SNEWS personality. End with a "Big picture:" if there's a broader trend connecting these stories.`;
+
+  try {
+    const result = await model.generateContent(prompt);
+    logMemory('query', { detail: topic });
+    return result.response.text();
+  } catch (err) {
+    console.error('Gemini narrateTopic error:', err.message);
+    let text = `📰 *Latest on "${topic}":*\n\n`;
+    for (let i = 0; i < articles.length; i++) {
+      const a = articles[i];
+      text += `*${i + 1}. ${a.title}*\n${a.summary || ''}\n🔗 ${a.url}\n\n`;
     }
+    return text;
   }
-
-  // If no model or no articles
-  if (articles.length === 0) {
-    return {
-      answer: "Hmm, I don't have much stored on that yet. Run /digest to pull in today's news and I'll be able to fill you in.",
-      sources: [],
-    };
-  }
-
-  // Fallback to heuristic
-  const fallback = heuristicAnswer(question, articles);
-  saveQuerySession(question, fallback.answer, fallback.sources.map(a => a.id));
-  return fallback;
 }
 
-// For handling plain freeform messages (not commands)
+// ─── Daily digest narrative ───────────────────────────────────────────────────
+export async function narrateDigest(topicArticles) {
+  const model = getModel();
+  const allArticles = Object.entries(topicArticles).flatMap(([topic, arts]) =>
+    arts.map(a => ({ ...a, topic }))
+  );
+
+  if (allArticles.length === 0) {
+    return "Yo nothing fresh dropped today across your tracked topics. Dead news day or the sources need a refresh. Try running /digest again later or add more topics with /addtopic";
+  }
+
+  if (!model) {
+    // Fallback: plain text grouping
+    let text = `🗞 *What's going on today:*\n\n`;
+    for (const [topic, articles] of Object.entries(topicArticles)) {
+      if (!articles.length) continue;
+      text += `*━ ${topic} ━*\n`;
+      for (const a of articles) {
+        text += `• *${a.title}* — ${a.summary || ''}\n🔗 ${a.url}\n\n`;
+      }
+    }
+    return text;
+  }
+
+  const context = buildContext(allArticles, 8000);
+  const topicList = Object.keys(topicArticles).join(', ');
+
+  const prompt = `${SNEWS_SYSTEM_PROMPT}
+
+---
+TODAY'S NEWS ACROSS TOPICS (${topicList}):
+${context}
+---
+
+Give the user their daily briefing. Be SNEWS — energetic opener, then go through the most important stories. Group by topic naturally in conversation, not with stiff headers. For each story: explain what happened, why it matters, drop the URL. End with a "Big picture:" pulling the day's themes together. Make it feel like a smart friend texting them the day's highlights, not a press release.`;
+
+  try {
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  } catch (err) {
+    console.error('Gemini digest narrative error:', err.message);
+    let text = `🗞 *Today's Digest:*\n\n`;
+    for (const [topic, articles] of Object.entries(topicArticles)) {
+      if (!articles.length) continue;
+      text += `*${topic}*\n`;
+      for (const a of articles) text += `• ${a.title}\n${a.url}\n\n`;
+    }
+    return text;
+  }
+}
+
+// ─── Conversational chat (plain messages + /ask) ──────────────────────────────
 export async function chat(message) {
   const model = getModel();
 
-  // Pull recent articles for context
-  const recent = getRecentArticles(72, 30);
-  recent.sort((a, b) => (b.importance || 0) - (a.importance || 0));
+  // Pull recent articles from DB
+  let articles = getRecentArticles(72, 40);
+  articles.sort((a, b) => (b.importance || 0) - (a.importance || 0));
 
-  // Also search for message-relevant articles
-  let searched = searchArticles(message);
-  const seenUrls = new Set(recent.map(a => a.url));
+  // If DB is mostly empty, try a live fetch based on the message
+  if (articles.length < 3) {
+    try {
+      const liveArticles = await ingestTopic(message.substring(0, 60), 8, false);
+      const seenUrls = new Set(articles.map(a => a.url));
+      for (const a of liveArticles) {
+        if (!seenUrls.has(a.url)) {
+          articles.push(a);
+          seenUrls.add(a.url);
+        }
+      }
+    } catch (err) {
+      console.error('chat live fetch error:', err.message);
+    }
+  }
+
+  // Also search DB for message-relevant articles
+  const searched = searchArticles(message);
+  const seenUrls = new Set(articles.map(a => a.url));
   for (const a of searched) {
     if (!seenUrls.has(a.url)) {
-      recent.push(a);
+      articles.push(a);
       seenUrls.add(a.url);
     }
   }
 
+  articles.sort((a, b) => (b.importance || 0) - (a.importance || 0));
+
   if (!model) {
-    // No AI — give a simple response
-    if (recent.length === 0) {
-      return "Hey! I'm your news bot. I don't have recent articles loaded yet — try /digest to pull in today's stories, then chat with me about them.";
+    if (articles.length === 0) {
+      return "Yo I'm your news bot but my AI brain isn't connected (no GEMINI_API_KEY). I can still fetch news — try /news [topic] or /digest!";
     }
-    return `Hey! I've got ${recent.length} articles tracked. Try /news [topic] or /ask [question] to dig in.`;
+    return `Got ${articles.length} articles tracked. Try /news [topic] to get the breakdown!`;
   }
 
-  const context = recent.length > 0 ? buildContext(recent, 3500) : 'No recent articles loaded yet.';
+  const context = articles.length > 0 ? buildContext(articles, 5000) : 'No recent articles loaded yet.';
 
-  const prompt = `${CHAT_SYSTEM_PROMPT}
+  const prompt = `${SNEWS_SYSTEM_PROMPT}
 
 ---
-RECENT NEWS YOU'VE BEEN TRACKING:
+YOUR CURRENT NEWS INTEL:
 ${context}
 ---
 
-USER SAYS: ${message}`;
+USER SAYS: ${message}
+
+Reply as SNEWS. If they're asking about news, brief them using what you have. If it's casual, vibe with it but bring up something relevant from your intel if you can. Keep it punchy.`;
 
   try {
     const result = await model.generateContent(prompt);
@@ -157,6 +219,11 @@ USER SAYS: ${message}`;
     return result.response.text();
   } catch (err) {
     console.error('Gemini chat error:', err.message);
-    return "Got your message but my AI brain is having a moment. Try again in a sec, or use /ask if you need something specific.";
+    return "Bro my AI backend just had a moment 😅 Try again in a sec, or use /news [topic] to pull fresh articles.";
   }
+}
+
+// Kept for internal use / backward compat
+export async function answerQuestion(question) {
+  return { answer: await chat(question), sources: [] };
 }

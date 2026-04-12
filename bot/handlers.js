@@ -10,7 +10,7 @@ import {
 } from '../core/db.js';
 import { ingestTopic, ingestDailyDigest, ingestSocialHighlights } from '../pipeline/ingestion.js';
 import { getBreakingArticles, formatAlert } from '../pipeline/alerting.js';
-import { answerQuestion, chat } from '../ai/queryEngine.js';
+import { answerQuestion, chat, narrateTopic, narrateDigest } from '../ai/queryEngine.js';
 import { markAlertSent } from '../core/db.js';
 import {
   formatDailyDigest, formatSearchResults, formatSourcesList,
@@ -66,108 +66,147 @@ function adminOnly(bot, msg) {
 // ─── Core Commands ───────────────────────────────────────────────────────────
 
 export async function startCmd(bot, msg) {
+  const me = await bot.getMe();
   const adminNote = isAdmin(msg)
-    ? `\n\n🔑 *You are an admin.* You can change settings and manage the bot.`
-    : `\n\n👤 You have read-only access. Admins can change settings.`;
+    ? `\n\n🔑 *You're an admin.* Full control — use /panel for the admin dashboard.`
+    : `\n\n👤 Read-only access. Ask the bot owner for admin rights.`;
 
   const groupNote = isGroup(msg)
-    ? `\n\n📌 *Group tip:* Use /register to get daily digests delivered here. Commands work as /cmd or /cmd@${(await bot.getMe()).username}.`
+    ? `\n\n📌 *Group tip:* Tag me or reply to me to chat. Use /s [question] to ask me anything. Use /register to get daily digests here.`
     : '';
 
-  const text = `🤖 *Jarvis Intelligence Bot*
+  const text = `⚡ *SNEWS — Your AI News Intelligence*
 
-Hey! I track news from BBC, Reuters, Reddit, YouTube and more — then summarize it in plain English.
+Yo! I'm wired into BBC, Reuters, Reddit, YouTube and more. I don't just forward headlines — I actually read and explain what's going on.
 
-📋 Your chat ID: \`${msg.chat.id}\`
-👤 Your user ID: \`${msg.from?.id}\`${adminNote}${groupNote}
+📋 Chat ID: \`${msg.chat.id}\`
+👤 User ID: \`${msg.from?.id}\`${adminNote}${groupNote}
 
-Send /help to see all commands.`;
-  await send(bot, msg.chat.id, text);
+Try /news [topic] or just text me anything\!`;
+
+  const opts = isAdmin(msg) ? {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '⚙️ Admin Panel', web_app: { url: `${process.env.MINI_APP_URL || `https://t.me/${me.username}`}` } },
+        { text: '📰 Get Digest', callback_data: 'digest' },
+      ]],
+    },
+  } : { parse_mode: 'Markdown' };
+
+  try {
+    await bot.sendMessage(msg.chat.id, text, opts);
+  } catch {
+    await send(bot, msg.chat.id, text);
+  }
 }
 
 export async function helpCmd(bot, msg) {
   const adminCmds = isAdmin(msg) ? `
 *⚙️ Admin — Topics:*
 /addtopic [name] — Track a new topic
-/removetopic [name] — Stop tracking a topic
-
-*⚙️ Admin — Alerts:*
-/addalert [topic] [keyword] — Keyword alert
-/removealert [topic] [keyword]
-/setalertlevel [topic] [0.0–1.0]
+/removetopic [name] — Stop tracking
 
 *⚙️ Admin — Feeds & Sources:*
 /feeds — All RSS feeds
 /addfeed [url] — Add RSS feed
 /removefeed [url] — Remove RSS feed
-/sources — Toggle sources on/off
+/sources — Toggle sources
 /togglesource [name]
 /addsubreddit r/name
-/removesubreddit r/name
 /addyoutube [channelId]
-/removeyoutube [channelId]
-/addtwitter @handle
-/removetwitter @handle
+
+*⚙️ Admin — Alerts:*
+/addalert [topic] [keyword]
+/removealert [topic] [keyword]
+/setalertlevel [topic] [0.0–1.0]
 
 *⚙️ Admin — Settings:*
 /settings — Full config
+/panel — Admin control panel
 /settime HH:MM — Digest time (UTC)
-/pause — Pause alerts
-/resume — Resume alerts` : `\n_ℹ️ Admin commands hidden. Ask the bot owner for access._`;
+/pause / /resume — Alerts on/off` : `\n_ℹ️ Admin commands are hidden. Contact the bot owner._`;
 
-  const text = `📖 *Jarvis Bot — Commands*
+  const text = `📖 *SNEWS Commands*
 ─────────────────────
 
-*Anyone can use:*
-/digest — Today's top stories
-/news [topic] — Search any topic
-/ask [question] — Q&A on stored articles
-/top — Top 5 from last 48h
-/topics — What's being tracked
-/alerts — Active alert rules
+*Talk to me:*
+/s [question] — Ask me anything (best for groups)
+/ask [question] — Same thing, longer form
+/news [topic] — Full briefing on any topic
+/digest — Today's full intel briefing
+/top — Top stories from last 48h
+
+*Info:*
+/topics — What I'm tracking
+/alerts — Active alerts
 /register — Get digests in this chat
 /unregister — Stop digests here
-/memory — Your interest profile
-/history — Recent Q&A
-${adminCmds}`;
+/history — Recent questions
+${adminCmds}
+
+💡 *Tip:* In groups, just tag me or reply to me to chat\!`;
   await send(bot, msg.chat.id, text);
 }
 
+// Admin panel command — sends a link to the mini web app
+export async function panelCmd(bot, msg) {
+  if (!adminOnly(bot, msg)) return;
+  const me = await bot.getMe();
+  const appUrl = process.env.MINI_APP_URL;
+
+  if (!appUrl) {
+    // Fallback: show settings inline if no mini app URL configured
+    const cfg = loadConfig();
+    await send(bot, msg.chat.id, formatConfigSummary(cfg));
+    await bot.sendMessage(msg.chat.id,
+      '💡 _Set MINI\\_APP\\_URL in your .env to get the full admin web panel._',
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  await bot.sendMessage(msg.chat.id, '⚙️ *Admin Control Panel*', {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [[{ text: '🚀 Open Admin Panel', web_app: { url: appUrl } }]],
+    },
+  });
+}
+
 export async function digestCmd(bot, msg) {
-  await bot.sendMessage(msg.chat.id, '⏳ Fetching daily digest... this may take 30-60 seconds.');
+  await bot.sendMessage(msg.chat.id, '⏳ Hold on, pulling today\'s intel... this takes a minute.');
 
   try {
     const topicArticles = await ingestDailyDigest();
-    const socialPosts = await ingestSocialHighlights();
-    const text = formatDailyDigest(topicArticles, socialPosts);
+    const text = await narrateDigest(topicArticles);
     await send(bot, msg.chat.id, text);
   } catch (err) {
-    await bot.sendMessage(msg.chat.id, `❌ Digest error: ${err.message}`);
+    await bot.sendMessage(msg.chat.id, `Bro something broke on my end: ${err.message}`);
   }
 }
 
 export async function newsCmd(bot, msg) {
   const topic = msg.text.replace(/^\/news(?:@\S+)?\s*/i, '').trim();
   if (!topic) {
-    await bot.sendMessage(msg.chat.id, 'Usage: /news [topic]\nExample: /news OpenAI');
+    await bot.sendMessage(msg.chat.id, 'Give me something to work with\! Usage: /news [topic]\nExample: /news AI, /news crypto, /news Ukraine');
     return;
   }
 
-  await bot.sendMessage(msg.chat.id, `🔍 Searching for "${topic}"...`);
+  await bot.sendChatAction(msg.chat.id, 'typing');
+  await bot.sendMessage(msg.chat.id, `🔍 On it — let me check everything I got on "${topic}"...`);
   try {
-    const cfg = loadConfig();
-    const articles = await ingestTopic(topic, cfg.search_results_count, false);
-    const text = formatSearchResults(topic, articles);
+    const text = await narrateTopic(topic);
     await send(bot, msg.chat.id, text);
   } catch (err) {
-    await bot.sendMessage(msg.chat.id, `❌ Search error: ${err.message}`);
+    await bot.sendMessage(msg.chat.id, `Ran into something: ${err.message}`);
   }
 }
 
 export async function askCmd(bot, msg) {
   const question = msg.text.replace(/^\/ask(?:@\S+)?\s*/i, '').trim();
   if (!question) {
-    await bot.sendMessage(msg.chat.id, 'Just ask me anything — e.g. /ask what\'s going on with AI this week?');
+    await bot.sendMessage(msg.chat.id, 'What do you wanna know? e.g. /ask what\'s going on between Iran and USA?');
     return;
   }
 
@@ -176,22 +215,48 @@ export async function askCmd(bot, msg) {
     const answer = await chat(question);
     await send(bot, msg.chat.id, answer);
   } catch (err) {
-    await bot.sendMessage(msg.chat.id, `Couldn't pull that up right now: ${err.message}`);
+    await bot.sendMessage(msg.chat.id, `Couldn't get that: ${err.message}`);
+  }
+}
+
+// /s — short alias for /ask, great for group chats
+export async function sCmd(bot, msg) {
+  const question = msg.text.replace(/^\/s(?:@\S+)?\s*/i, '').trim();
+  if (!question) {
+    await bot.sendMessage(msg.chat.id, 'Just drop your question after /s — e.g. /s what\'s happening with Trump?');
+    return;
+  }
+
+  await bot.sendChatAction(msg.chat.id, 'typing');
+  try {
+    const answer = await chat(question);
+    await send(bot, msg.chat.id, answer);
+  } catch (err) {
+    await bot.sendMessage(msg.chat.id, `Couldn't get that: ${err.message}`);
   }
 }
 
 export async function topCmd(bot, msg) {
-  const articles = getRecentArticles(48, 5);
+  const articles = getRecentArticles(48, 8);
   if (articles.length === 0) {
-    await bot.sendMessage(msg.chat.id, 'No articles in the last 48 hours. Run /digest first.');
+    await bot.sendMessage(msg.chat.id, 'Nothing in the last 48h — hit /digest to pull fresh news first, then I\'ll have something for you.');
     return;
   }
 
-  let text = '🏆 *Top 5 Stories (Last 48h)*\n─────────────────────\n\n';
-  for (let i = 0; i < articles.length; i++) {
-    text += `*${i + 1}.* ${formatArticle(articles[i])}\n\n`;
+  await bot.sendChatAction(msg.chat.id, 'typing');
+  try {
+    // Use AI to narrate top stories
+    const fakeDigest = { 'Top Stories': articles.slice(0, 8) };
+    const text = await narrateDigest(fakeDigest);
+    await send(bot, msg.chat.id, text);
+  } catch (err) {
+    // Fallback
+    let text = '🏆 *Top Stories (Last 48h)*\n\n';
+    for (let i = 0; i < Math.min(5, articles.length); i++) {
+      text += `*${i + 1}.* ${articles[i].title}\n${articles[i].summary || ''}\n🔗 ${articles[i].url}\n\n`;
+    }
+    await send(bot, msg.chat.id, text);
   }
-  await send(bot, msg.chat.id, text);
 }
 
 export async function settingsCmd(bot, msg) {

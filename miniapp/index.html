@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>SNEWS Admin Panel</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #13131a;
+      --border: #1e1e2e;
+      --accent: #7c3aed;
+      --accent2: #06b6d4;
+      --red: #ef4444;
+      --green: #22c55e;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding-bottom: 80px;
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, #1a0a3e 0%, #0a1628 100%);
+      padding: 20px 16px 16px;
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .header h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
+    .header h1 span { color: var(--accent2); }
+    .header .subtitle { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .status-bar { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+    }
+    .badge.online { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+    .badge.ai { background: rgba(124,58,237,0.15); color: #a78bfa; border: 1px solid rgba(124,58,237,0.3); }
+    .badge.sources { background: rgba(6,182,212,0.15); color: var(--accent2); border: 1px solid rgba(6,182,212,0.3); }
+
+    /* Nav tabs */
+    .tabs {
+      display: flex; background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto; scrollbar-width: none;
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab {
+      flex: 1; min-width: 70px; padding: 12px 8px;
+      text-align: center; font-size: 11px; font-weight: 600;
+      color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent;
+      transition: all 0.2s; white-space: nowrap;
+    }
+    .tab.active { color: var(--accent2); border-bottom-color: var(--accent2); }
+    .tab .icon { font-size: 16px; display: block; margin-bottom: 2px; }
+
+    /* Sections */
+    .section { display: none; padding: 16px; }
+    .section.active { display: block; }
+
+    /* Cards */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+    }
+    .card-title {
+      font-size: 13px; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;
+    }
+
+    /* Inputs */
+    input, select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px; color: var(--text);
+      font-size: 14px; outline: none; transition: border-color 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--accent2); }
+    input::placeholder { color: var(--muted); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 6px; padding: 10px 16px; border-radius: 8px; font-size: 14px;
+      font-weight: 600; cursor: pointer; border: none; transition: all 0.2s;
+    }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: #6d28d9; }
+    .btn-secondary { background: var(--border); color: var(--text); }
+    .btn-danger { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+    .btn-success { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+    .btn-full { width: 100%; }
+    .btn:active { transform: scale(0.97); }
+
+    /* Input + button row */
+    .input-row { display: flex; gap: 8px; }
+    .input-row input { flex: 1; }
+
+    /* Tag list */
+    .tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: rgba(124,58,237,0.15); color: #a78bfa;
+      border: 1px solid rgba(124,58,237,0.3);
+      border-radius: 20px; padding: 4px 10px; font-size: 12px; font-weight: 500;
+    }
+    .tag button {
+      background: none; border: none; color: #a78bfa; cursor: pointer;
+      font-size: 14px; padding: 0; line-height: 1; opacity: 0.6;
+    }
+    .tag button:hover { opacity: 1; }
+
+    /* Toggle switch */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0; border-bottom: 1px solid var(--border);
+    }
+    .toggle-row:last-child { border-bottom: none; }
+    .toggle-label { font-size: 14px; }
+    .toggle-label .sub { font-size: 11px; color: var(--muted); display: block; }
+    .toggle {
+      position: relative; width: 44px; height: 24px;
+      background: var(--border); border-radius: 12px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .toggle.on { background: var(--accent2); }
+    .toggle::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 20px; height: 20px; background: white; border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle.on::after { transform: translateX(20px); }
+
+    /* Stats row */
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .stat-card {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px; text-align: center;
+    }
+    .stat-card .num { font-size: 24px; font-weight: 800; color: var(--accent2); }
+    .stat-card .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+
+    /* Alert toast */
+    .toast {
+      position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(20px);
+      background: var(--green); color: white; padding: 10px 20px;
+      border-radius: 20px; font-size: 13px; font-weight: 600;
+      opacity: 0; transition: all 0.3s; z-index: 100; white-space: nowrap;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.error { background: var(--red); }
+
+    /* Digest time picker */
+    .time-row { display: flex; gap: 8px; align-items: center; }
+    .time-row select { flex: 1; }
+    .time-row span { color: var(--muted); font-size: 18px; }
+
+    /* Source pills */
+    .source-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .source-item {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .source-name { font-size: 13px; font-weight: 500; }
+    .source-sub { font-size: 10px; color: var(--muted); }
+
+    /* Separator */
+    hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+    .mt { margin-top: 8px; }
+    .mb { margin-bottom: 8px; }
+
+    /* Loading */
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.3); border-top-color: white;
+      border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>⚡ <span>SNEWS</span> Admin Panel</h1>
+  <div class="subtitle">Full control over your news intelligence</div>
+  <div class="status-bar">
+    <span class="badge online">🟢 Bot Online</span>
+    <span class="badge ai" id="ai-badge">🤖 AI Ready</span>
+    <span class="badge sources" id="src-badge">📡 Loading...</span>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('overview')"><span class="icon">📊</span>Overview</div>
+  <div class="tab" onclick="switchTab('topics')"><span class="icon">🏷️</span>Topics</div>
+  <div class="tab" onclick="switchTab('sources')"><span class="icon">📡</span>Sources</div>
+  <div class="tab" onclick="switchTab('schedule')"><span class="icon">⏰</span>Schedule</div>
+  <div class="tab" onclick="switchTab('actions')"><span class="icon">⚡</span>Actions</div>
+</div>
+
+<!-- OVERVIEW TAB -->
+<div class="section active" id="tab-overview">
+  <div class="stats">
+    <div class="stat-card"><div class="num" id="stat-topics">—</div><div class="lbl">Topics</div></div>
+    <div class="stat-card"><div class="num" id="stat-feeds">—</div><div class="lbl">RSS Feeds</div></div>
+    <div class="stat-card"><div class="num" id="stat-chats">—</div><div class="lbl">Chats</div></div>
+  </div>
+
+  <div class="card mt">
+    <div class="card-title">Quick Actions</div>
+    <div style="display:grid; gap:8px;">
+      <button class="btn btn-primary btn-full" onclick="sendCmd('/digest')">📰 Trigger Digest Now</button>
+      <button class="btn btn-secondary btn-full" onclick="sendCmd('/top')">🏆 Get Top Stories</button>
+      <button class="btn btn-secondary btn-full" onclick="sendCmd('/settings')">⚙️ View Full Settings</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Bot Status</div>
+    <div class="toggle-row">
+      <div class="toggle-label">Alerts & Digests<span class="sub">Automatic scheduled delivery</span></div>
+      <div class="toggle on" id="toggle-alerts" onclick="toggleAlerts(this)"></div>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle-label">Auto-register new chats<span class="sub">Off by default</span></div>
+      <div class="toggle" id="toggle-auto" onclick="this.classList.toggle('on')"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Ask SNEWS</div>
+    <div class="input-row">
+      <input type="text" id="quick-ask" placeholder="What's going on with AI today?" />
+      <button class="btn btn-primary" onclick="quickAsk()">Ask</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOPICS TAB -->
+<div class="section" id="tab-topics">
+  <div class="card">
+    <div class="card-title">Tracked Topics</div>
+    <div class="input-row mb">
+      <input type="text" id="new-topic" placeholder="e.g. AI, Crypto, Uzbekistan" />
+      <button class="btn btn-primary" onclick="addTopic()">+ Add</button>
+    </div>
+    <div class="tag-list" id="topics-list">
+      <span style="color:var(--muted); font-size:13px">Loading...</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Reddit Subreddits</div>
+    <div class="input-row mb">
+      <input type="text" id="new-sub" placeholder="r/technology" />
+      <button class="btn btn-primary" onclick="addSubreddit()">+ Add</button>
+    </div>
+    <div class="tag-list" id="subs-list">
+      <span style="color:var(--muted); font-size:13px">Loading...</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">YouTube Channels</div>
+    <div class="input-row mb">
+      <input type="text" id="new-yt" placeholder="Channel ID (UCxxxxxxx)" />
+      <button class="btn btn-primary" onclick="addYoutube()">+ Add</button>
+    </div>
+    <div class="tag-list" id="yt-list">
+      <span style="color:var(--muted); font-size:13px">Loading...</span>
+    </div>
+  </div>
+</div>
+
+<!-- SOURCES TAB -->
+<div class="section" id="tab-sources">
+  <div class="card">
+    <div class="card-title">Active Sources</div>
+    <div id="sources-list">
+      <div class="toggle-row">
+        <div class="toggle-label">Google News RSS<span class="sub">Free, no API key needed</span></div>
+        <div class="toggle on" id="src-google" onclick="toggleSource('google_news_rss', this)"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-label">Reddit<span class="sub">Public RSS, no key needed</span></div>
+        <div class="toggle on" id="src-reddit" onclick="toggleSource('reddit', this)"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-label">YouTube<span class="sub">Public channel RSS feeds</span></div>
+        <div class="toggle on" id="src-youtube" onclick="toggleSource('youtube', this)"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-label">NewsAPI<span class="sub">Requires API key in .env</span></div>
+        <div class="toggle" id="src-newsapi" onclick="toggleSource('newsapi', this)"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-label">Twitter/X<span class="sub">Requires Bearer Token</span></div>
+        <div class="toggle" id="src-twitter" onclick="toggleSource('twitter', this)"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Custom RSS Feeds</div>
+    <div class="input-row mb">
+      <input type="url" id="new-feed" placeholder="https://feeds.example.com/rss.xml" />
+      <button class="btn btn-primary" onclick="addFeed()">+ Add</button>
+    </div>
+    <div id="feeds-list" style="display:flex; flex-direction:column; gap:6px;">
+      <span style="color:var(--muted); font-size:13px">Loading...</span>
+    </div>
+  </div>
+</div>
+
+<!-- SCHEDULE TAB -->
+<div class="section" id="tab-schedule">
+  <div class="card">
+    <div class="card-title">Daily Digest Time (UTC)</div>
+    <div class="time-row mb">
+      <select id="digest-hour">
+        <!-- filled by JS -->
+      </select>
+      <span>:</span>
+      <select id="digest-minute">
+        <option value="00">00</option>
+        <option value="15">15</option>
+        <option value="30">30</option>
+        <option value="45">45</option>
+      </select>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="setTime()">⏰ Save Digest Time</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Alert Threshold</div>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:10px;">Only alert for stories above this importance score (0.0–1.0). 0.75 = only major news.</p>
+    <div class="input-row">
+      <input type="number" id="alert-threshold" min="0" max="1" step="0.05" value="0.75" placeholder="0.75" />
+      <button class="btn btn-primary" onclick="setThreshold()">Save</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Registered Chats</div>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:10px;">Chats that receive scheduled digests and alerts.</p>
+    <div id="chats-list" style="display:flex; flex-direction:column; gap:6px;">
+      <span style="color:var(--muted); font-size:13px">Loading...</span>
+    </div>
+  </div>
+</div>
+
+<!-- ACTIONS TAB -->
+<div class="section" id="tab-actions">
+  <div class="card">
+    <div class="card-title">🔥 Instant Actions</div>
+    <div style="display:grid; gap:8px;">
+      <button class="btn btn-primary btn-full" onclick="sendCmd('/digest')">📰 Send Digest to All Chats</button>
+      <button class="btn btn-secondary btn-full" onclick="sendCmd('/top')">🏆 Get Top Stories Now</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🎛️ Bot Control</div>
+    <div style="display:grid; gap:8px;">
+      <button class="btn btn-success btn-full" onclick="sendCmd('/resume')">▶️ Resume Alerts</button>
+      <button class="btn btn-danger btn-full" onclick="sendCmd('/pause')">⏸️ Pause Alerts</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🧠 SNEWS Personality Mode</div>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:10px;">Override SNEWS tone for all responses.</p>
+    <div style="display:grid; gap:8px;">
+      <button class="btn btn-secondary btn-full" onclick="sendCmd('/s be serious')">😐 Switch to Serious Mode</button>
+      <button class="btn btn-secondary btn-full" onclick="sendCmd('/s be funny again')">😄 Back to Chaotic Mode</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">⚠️ Danger Zone</div>
+    <button class="btn btn-danger btn-full" onclick="confirmReset()">🗑️ Clear Article Cache (DB)</button>
+  </div>
+</div>
+
+<!-- Toast notification -->
+<div class="toast" id="toast"></div>
+
+<script>
+  // ─── Telegram WebApp init ──────────────────────────────────────────────────
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    tg.MainButton.hide();
+  }
+
+  // Bot token passed via URL param (set by bot when opening mini app)
+  const params = new URLSearchParams(window.location.search);
+  const BOT_TOKEN = params.get('token') || '';
+  const CHAT_ID = params.get('chat') || tg?.initDataUnsafe?.user?.id || '';
+
+  // ─── State ─────────────────────────────────────────────────────────────────
+  let state = {
+    topics: [],
+    subreddits: [],
+    youtube_channels: [],
+    custom_rss_feeds: [],
+    registered_chats: [],
+    sources: {},
+    digest_hour: 9,
+    digest_minute: 0,
+    alert_threshold: 0.75,
+  };
+
+  // ─── UI helpers ────────────────────────────────────────────────────────────
+  function showToast(msg, isError = false) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast' + (isError ? ' error' : '') + ' show';
+    setTimeout(() => { t.className = 'toast'; }, 3000);
+  }
+
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+  }
+
+  // ─── Render helpers ────────────────────────────────────────────────────────
+  function renderTags(containerId, items, removeCmd) {
+    const el = document.getElementById(containerId);
+    if (!items || items.length === 0) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:13px">None yet</span>';
+      return;
+    }
+    el.innerHTML = items.map(item =>
+      `<span class="tag">${item}<button onclick="removeTag('${removeCmd}','${item}')">×</button></span>`
+    ).join('');
+  }
+
+  function renderFeedsList(feeds) {
+    const el = document.getElementById('feeds-list');
+    if (!feeds || feeds.length === 0) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:13px">No custom feeds yet</span>';
+      return;
+    }
+    el.innerHTML = feeds.map(url => `
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
+        <span style="font-size:12px;color:var(--text);word-break:break-all;flex:1;">${url}</span>
+        <button class="btn btn-danger" style="padding:4px 8px;font-size:11px;margin-left:8px;" onclick="removeTag('/removefeed','${url}')">✕</button>
+      </div>`).join('');
+  }
+
+  function renderChatsList(chats) {
+    const el = document.getElementById('chats-list');
+    if (!chats || chats.length === 0) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:13px">No registered chats</span>';
+      return;
+    }
+    el.innerHTML = chats.map(id => `
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
+        <span style="font-size:13px;">💬 Chat ${id}</span>
+        <button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="removeTag('/unregister','${id}')">Remove</button>
+      </div>`).join('');
+  }
+
+  function renderStats() {
+    document.getElementById('stat-topics').textContent = state.topics.length;
+    document.getElementById('stat-feeds').textContent =
+      (state.custom_rss_feeds?.length || 0) + 9; // 9 built-in BBC+Reuters+MIT feeds
+    document.getElementById('stat-chats').textContent = state.registered_chats?.length || 0;
+  }
+
+  function renderHours() {
+    const sel = document.getElementById('digest-hour');
+    for (let h = 0; h < 24; h++) {
+      const opt = document.createElement('option');
+      opt.value = h;
+      opt.textContent = String(h).padStart(2, '0');
+      if (h === state.digest_hour) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+
+  function renderSources() {
+    const srcMap = {
+      'google_news_rss': 'src-google',
+      'reddit': 'src-reddit',
+      'youtube': 'src-youtube',
+      'newsapi': 'src-newsapi',
+      'twitter': 'src-twitter',
+    };
+    for (const [key, elId] of Object.entries(srcMap)) {
+      const el = document.getElementById(elId);
+      if (el && state.sources[key] !== undefined) {
+        el.className = 'toggle' + (state.sources[key] ? ' on' : '');
+      }
+    }
+  }
+
+  function renderAll() {
+    renderTags('topics-list', state.topics, '/removetopic');
+    renderTags('subs-list', state.subreddits, '/removesubreddit');
+    renderTags('yt-list', state.youtube_channels, '/removeyoutube');
+    renderFeedsList(state.custom_rss_feeds);
+    renderChatsList(state.registered_chats);
+    renderStats();
+    renderSources();
+    document.getElementById('src-badge').textContent = `📡 ${state.topics.length} topics`;
+    document.getElementById('alert-threshold').value = state.alert_threshold;
+    const minSel = document.getElementById('digest-minute');
+    if (minSel) {
+      const padded = String(state.digest_minute).padStart(2,'0');
+      for (const opt of minSel.options) { if (opt.value === padded) opt.selected = true; }
+    }
+  }
+
+  // ─── Load config from bot via Telegram sendMessage trick ──────────────────
+  // Since we can't call the local API directly, we use the config embedded in the URL
+  // OR fall back to a demo state so the panel still works
+  function loadState() {
+    try {
+      const raw = params.get('config');
+      if (raw) {
+        const cfg = JSON.parse(decodeURIComponent(raw));
+        Object.assign(state, cfg);
+      }
+    } catch (e) {}
+
+    // Fallback demo data so UI renders even without config param
+    if (!state.topics.length) state.topics = ['AI', 'Technology', 'Politics'];
+    if (!state.subreddits.length) state.subreddits = ['technology', 'worldnews', 'artificial'];
+    if (!state.sources.google_news_rss) state.sources = {
+      google_news_rss: true, reddit: true, youtube: true, newsapi: false, twitter: false
+    };
+
+    renderHours();
+    renderAll();
+  }
+
+  // ─── Send Telegram bot command ─────────────────────────────────────────────
+  // Uses Telegram WebApp sendData to pass commands back to the bot
+  function sendCmd(cmd) {
+    if (tg) {
+      tg.sendData(JSON.stringify({ action: 'command', command: cmd }));
+      showToast(`Sent: ${cmd}`);
+    } else {
+      showToast(`Would send: ${cmd} (no Telegram context)`, true);
+    }
+  }
+
+  // ─── Actions ───────────────────────────────────────────────────────────────
+  function addTopic() {
+    const input = document.getElementById('new-topic');
+    const val = input.value.trim();
+    if (!val) return;
+    if (state.topics.includes(val)) { showToast('Already tracking that!', true); return; }
+    state.topics.push(val);
+    renderTags('topics-list', state.topics, '/removetopic');
+    renderStats();
+    sendCmd(`/addtopic ${val}`);
+    input.value = '';
+    showToast(`✅ Added topic: ${val}`);
+  }
+
+  function addSubreddit() {
+    const input = document.getElementById('new-sub');
+    const val = input.value.trim().replace(/^r\//, '');
+    if (!val) return;
+    state.subreddits.push(val);
+    renderTags('subs-list', state.subreddits, '/removesubreddit');
+    sendCmd(`/addsubreddit r/${val}`);
+    input.value = '';
+    showToast(`✅ Added r/${val}`);
+  }
+
+  function addYoutube() {
+    const input = document.getElementById('new-yt');
+    const val = input.value.trim();
+    if (!val) return;
+    state.youtube_channels.push(val);
+    renderTags('yt-list', state.youtube_channels, '/removeyoutube');
+    sendCmd(`/addyoutube ${val}`);
+    input.value = '';
+    showToast(`✅ Added YouTube channel`);
+  }
+
+  function addFeed() {
+    const input = document.getElementById('new-feed');
+    const val = input.value.trim();
+    if (!val || !val.startsWith('http')) { showToast('Enter a valid URL', true); return; }
+    state.custom_rss_feeds.push(val);
+    renderFeedsList(state.custom_rss_feeds);
+    renderStats();
+    sendCmd(`/addfeed ${val}`);
+    input.value = '';
+    showToast(`✅ Added RSS feed`);
+  }
+
+  function removeTag(cmd, val) {
+    sendCmd(`${cmd} ${val}`);
+    // Update local state
+    if (cmd === '/removetopic') state.topics = state.topics.filter(t => t !== val);
+    if (cmd === '/removesubreddit') state.subreddits = state.subreddits.filter(s => s !== val);
+    if (cmd === '/removeyoutube') state.youtube_channels = state.youtube_channels.filter(c => c !== val);
+    if (cmd === '/removefeed') state.custom_rss_feeds = state.custom_rss_feeds.filter(f => f !== val);
+    renderAll();
+    showToast(`✅ Removed`);
+  }
+
+  function toggleSource(name, el) {
+    el.classList.toggle('on');
+    const on = el.classList.contains('on');
+    state.sources[name] = on;
+    sendCmd(`/togglesource ${name}`);
+    showToast(`${on ? '✅ Enabled' : '❌ Disabled'} ${name}`);
+  }
+
+  function toggleAlerts(el) {
+    el.classList.toggle('on');
+    const paused = !el.classList.contains('on');
+    sendCmd(paused ? '/pause' : '/resume');
+    showToast(paused ? '⏸️ Alerts paused' : '▶️ Alerts resumed');
+  }
+
+  function setTime() {
+    const h = document.getElementById('digest-hour').value;
+    const m = document.getElementById('digest-minute').value;
+    sendCmd(`/settime ${String(h).padStart(2,'0')}:${m}`);
+    showToast(`⏰ Digest time set to ${String(h).padStart(2,'0')}:${m} UTC`);
+  }
+
+  function setThreshold() {
+    const val = document.getElementById('alert-threshold').value;
+    if (val < 0 || val > 1) { showToast('Must be 0.0–1.0', true); return; }
+    sendCmd(`/setalertlevel all ${val}`);
+    showToast(`✅ Alert threshold set to ${val}`);
+  }
+
+  function quickAsk() {
+    const q = document.getElementById('quick-ask').value.trim();
+    if (!q) return;
+    sendCmd(`/s ${q}`);
+    document.getElementById('quick-ask').value = '';
+    showToast('💬 Question sent!');
+  }
+
+  function confirmReset() {
+    if (confirm('Clear the article cache? This removes all stored articles from the database. The bot will start fresh on next digest.')) {
+      showToast('❌ DB reset requires manual action — run: rm jarvis.db on your server', true);
+    }
+  }
+
+  // Enter key support
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const focused = document.activeElement;
+      if (focused.id === 'new-topic') addTopic();
+      if (focused.id === 'new-sub') addSubreddit();
+      if (focused.id === 'new-yt') addYoutube();
+      if (focused.id === 'new-feed') addFeed();
+      if (focused.id === 'quick-ask') quickAsk();
+    }
+  });
+
+  // ─── Init ──────────────────────────────────────────────────────────────────
+  loadState();
+</script>
+</body>
+</html>
