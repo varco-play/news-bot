@@ -8,42 +8,46 @@ import { markAlertSent } from '../core/db.js';
 let digestJob = null;
 let alertJob = null;
 let _bot = null;
-let _chatId = null;
 let _paused = false;
 
-export function isPaused() {
-  return _paused;
-}
+export function isPaused() { return _paused; }
+export function setPaused(val) { _paused = val; }
 
-export function setPaused(val) {
-  _paused = val;
+// Broadcast a message to every registered chat
+async function broadcast(text) {
+  const cfg = loadConfig();
+  const chats = cfg.registered_chats || [];
+  for (const chatId of chats) {
+    for (const part of splitMessage(text)) {
+      await _bot.sendMessage(chatId, part, { parse_mode: 'Markdown' })
+        .catch(() => _bot.sendMessage(chatId, part).catch(() => {}));
+    }
+  }
 }
 
 async function sendDailyDigest() {
-  if (_paused || !_bot || !_chatId) return;
+  if (_paused || !_bot) return;
+  const cfg = loadConfig();
+  if (!cfg.registered_chats || cfg.registered_chats.length === 0) return;
 
   try {
     console.log('[Scheduler] Running daily digest...');
     const topicArticles = await ingestDailyDigest();
     const socialPosts = await ingestSocialHighlights();
     const text = formatDailyDigest(topicArticles, socialPosts);
-
-    for (const part of splitMessage(text)) {
-      await _bot.sendMessage(_chatId, part, { parse_mode: 'Markdown' }).catch(() => {
-        _bot.sendMessage(_chatId, part);
-      });
-    }
-    console.log('[Scheduler] Daily digest sent.');
+    await broadcast(text);
+    console.log(`[Scheduler] Daily digest sent to ${cfg.registered_chats.length} chat(s).`);
   } catch (err) {
     console.error('[Scheduler] Digest error:', err.message);
   }
 }
 
 async function alertPoll() {
-  if (_paused || !_bot || !_chatId) return;
+  if (_paused || !_bot) return;
+  const cfg = loadConfig();
+  if (!cfg.registered_chats || cfg.registered_chats.length === 0) return;
 
   try {
-    const cfg = loadConfig();
     // Ingest new articles for each topic
     for (const topic of cfg.topics) {
       await ingestTopic(topic, 5, true);
@@ -52,23 +56,20 @@ async function alertPoll() {
     const breaking = getBreakingArticles();
     for (const article of breaking) {
       const text = formatAlert(article);
-      await _bot.sendMessage(_chatId, text, { parse_mode: 'Markdown' }).catch(() => {
-        _bot.sendMessage(_chatId, text);
-      });
+      await broadcast(text);
       markAlertSent(article.id);
     }
 
     if (breaking.length > 0) {
-      console.log(`[Scheduler] Sent ${breaking.length} alert(s).`);
+      console.log(`[Scheduler] Sent ${breaking.length} alert(s) to ${cfg.registered_chats.length} chat(s).`);
     }
   } catch (err) {
     console.error('[Scheduler] Alert poll error:', err.message);
   }
 }
 
-export function setupScheduler(bot, chatId) {
+export function setupScheduler(bot) {
   _bot = bot;
-  _chatId = chatId;
 
   const cfg = loadConfig();
   const h = cfg.digest_hour || 8;
@@ -81,7 +82,7 @@ export function setupScheduler(bot, chatId) {
 
   // Daily digest cron
   digestJob = cron.schedule(`${m} ${h} * * *`, sendDailyDigest, { timezone: 'UTC' });
-  console.log(`[Scheduler] Daily digest at ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} UTC`);
+  console.log(`[Scheduler] Daily digest at ${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} UTC`);
 
   // Alert polling cron
   alertJob = cron.schedule(`*/${interval} * * * *`, alertPoll);
@@ -92,7 +93,5 @@ export function setupScheduler(bot, chatId) {
 }
 
 export function restartScheduler() {
-  if (_bot && _chatId) {
-    setupScheduler(_bot, _chatId);
-  }
+  if (_bot) setupScheduler(_bot);
 }

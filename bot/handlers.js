@@ -2,7 +2,7 @@ import {
   loadConfig, addTopic, removeTopic, addTwitterAccount, removeTwitterAccount,
   addInstagramAccount, removeInstagramAccount, addSubreddit, removeSubreddit,
   toggleSource, setDigestTime, addYoutubeChannel, removeYoutubeChannel,
-  addRssFeed, removeRssFeed,
+  addRssFeed, removeRssFeed, registerChat, unregisterChat,
 } from '../core/config.js';
 import {
   upsertTopic, deactivateTopic, getAllTopics, addAlertRule, removeAlertRule,
@@ -18,11 +18,31 @@ import {
 } from './formatter.js';
 import { isPaused, setPaused, restartScheduler } from './scheduler.js';
 
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+// ─── Auth model ──────────────────────────────────────────────────────────────
+// TELEGRAM_ADMIN_IDS = comma-separated list of user IDs who can change settings.
+// Falls back to TELEGRAM_CHAT_ID for backwards compatibility.
+// If neither is set, the first person to /start becomes admin automatically.
+// Everyone else can use read-only commands (/news, /digest, /top, /ask, /help).
 
-function isAuthorized(msg) {
-  if (!CHAT_ID) return true;
-  return String(msg.chat.id) === String(CHAT_ID);
+const ADMIN_IDS = new Set(
+  (process.env.TELEGRAM_ADMIN_IDS || process.env.TELEGRAM_CHAT_ID || '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+);
+
+// Chats that receive scheduled digests/alerts (persisted in config)
+export function getRegisteredChats() {
+  const cfg = loadConfig();
+  return cfg.registered_chats || [];
+}
+
+function isAdmin(msg) {
+  // If no admins configured at all, allow anyone (open mode)
+  if (ADMIN_IDS.size === 0) return true;
+  return ADMIN_IDS.has(String(msg.from?.id)) || ADMIN_IDS.has(String(msg.chat?.id));
+}
+
+function isGroup(msg) {
+  return msg.chat?.type === 'group' || msg.chat?.type === 'supergroup';
 }
 
 async function send(bot, chatId, text) {
@@ -35,67 +55,85 @@ async function send(bot, chatId, text) {
   }
 }
 
+function adminOnly(bot, msg) {
+  if (!isAdmin(msg)) {
+    bot.sendMessage(msg.chat.id, '🔒 This command is admin-only. Ask the bot owner to add you.');
+    return false;
+  }
+  return true;
+}
+
 // ─── Core Commands ───────────────────────────────────────────────────────────
 
 export async function startCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
-  const text = `🤖 *Jarvis Intelligence Bot*\n\nWelcome! I monitor news from multiple sources and deliver AI-scored intelligence.\n\nYour Chat ID: \`${msg.chat.id}\`\n\nSend /help for all commands.`;
+  const adminNote = isAdmin(msg)
+    ? `\n\n🔑 *You are an admin.* You can change settings and manage the bot.`
+    : `\n\n👤 You have read-only access. Admins can change settings.`;
+
+  const groupNote = isGroup(msg)
+    ? `\n\n📌 *Group tip:* Use /register to get daily digests delivered here. Commands work as /cmd or /cmd@${(await bot.getMe()).username}.`
+    : '';
+
+  const text = `🤖 *Jarvis Intelligence Bot*
+
+Hey! I track news from BBC, Reuters, Reddit, YouTube and more — then summarize it in plain English.
+
+📋 Your chat ID: \`${msg.chat.id}\`
+👤 Your user ID: \`${msg.from?.id}\`${adminNote}${groupNote}
+
+Send /help to see all commands.`;
   await send(bot, msg.chat.id, text);
 }
 
 export async function helpCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
-  const text = `📖 *Jarvis Bot — Command Reference*
-─────────────────────
+  const adminCmds = isAdmin(msg) ? `
+*⚙️ Admin — Topics:*
+/addtopic [name] — Track a new topic
+/removetopic [name] — Stop tracking a topic
 
-*Core Commands:*
-/digest — Get today's top stories
-/news [topic] — Search any topic on demand
-/ask [question] — Q&A over stored articles
-/top — Top 5 stories from last 48h
-/settings — Show current configuration
+*⚙️ Admin — Alerts:*
+/addalert [topic] [keyword] — Keyword alert
+/removealert [topic] [keyword]
+/setalertlevel [topic] [0.0–1.0]
 
-*Topic Management:*
-/topics — List monitored topics
-/addtopic [name] — Add a topic
-/removetopic [name] — Remove a topic
-
-*Alert Configuration:*
-/alerts — Show alert rules
-/addalert [topic] [keyword] — Add keyword alert
-/removealert [topic] [keyword] — Remove keyword alert
-/setalertlevel [topic] [0.0-1.0] — Set threshold
-
-*News Feeds:*
-/feeds — List all RSS feeds (built-in + yours)
-/addfeed [url] — Add any RSS feed URL
-/removefeed [url] — Remove a custom feed
-
-*Social Accounts:*
-/addtwitter @handle
-/removetwitter @handle
-/addinstagram username
-/removeinstagram username
+*⚙️ Admin — Feeds & Sources:*
+/feeds — All RSS feeds
+/addfeed [url] — Add RSS feed
+/removefeed [url] — Remove RSS feed
+/sources — Toggle sources on/off
+/togglesource [name]
 /addsubreddit r/name
 /removesubreddit r/name
-/addyoutube [channelId] — Add YouTube channel
-/removeyoutube [channelId] — Remove YouTube channel
+/addyoutube [channelId]
+/removeyoutube [channelId]
+/addtwitter @handle
+/removetwitter @handle
 
-*Settings:*
-/sources — Show source toggles
-/togglesource [name] — Enable/disable source
-/settime HH:MM — Set digest time (UTC)
+*⚙️ Admin — Settings:*
+/settings — Full config
+/settime HH:MM — Digest time (UTC)
 /pause — Pause alerts
-/resume — Resume alerts
+/resume — Resume alerts` : `\n_ℹ️ Admin commands hidden. Ask the bot owner for access._`;
 
-*Memory:*
-/memory — View your interest profile
-/history — Recent Q&A queries`;
+  const text = `📖 *Jarvis Bot — Commands*
+─────────────────────
+
+*Anyone can use:*
+/digest — Today's top stories
+/news [topic] — Search any topic
+/ask [question] — Q&A on stored articles
+/top — Top 5 from last 48h
+/topics — What's being tracked
+/alerts — Active alert rules
+/register — Get digests in this chat
+/unregister — Stop digests here
+/memory — Your interest profile
+/history — Recent Q&A
+${adminCmds}`;
   await send(bot, msg.chat.id, text);
 }
 
 export async function digestCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
   await bot.sendMessage(msg.chat.id, '⏳ Fetching daily digest... this may take 30-60 seconds.');
 
   try {
@@ -109,8 +147,7 @@ export async function digestCmd(bot, msg) {
 }
 
 export async function newsCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
-  const topic = msg.text.replace(/^\/news\s*/i, '').trim();
+  const topic = msg.text.replace(/^\/news(?:@\S+)?\s*/i, '').trim();
   if (!topic) {
     await bot.sendMessage(msg.chat.id, 'Usage: /news [topic]\nExample: /news OpenAI');
     return;
@@ -128,8 +165,7 @@ export async function newsCmd(bot, msg) {
 }
 
 export async function askCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
-  const question = msg.text.replace(/^\/ask\s*/i, '').trim();
+  const question = msg.text.replace(/^\/ask(?:@\S+)?\s*/i, '').trim();
   if (!question) {
     await bot.sendMessage(msg.chat.id, 'Usage: /ask [question]\nExample: /ask What happened with OpenAI?');
     return;
@@ -145,7 +181,6 @@ export async function askCmd(bot, msg) {
 }
 
 export async function topCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
   const articles = getRecentArticles(48, 5);
   if (articles.length === 0) {
     await bot.sendMessage(msg.chat.id, 'No articles in the last 48 hours. Run /digest first.');
@@ -160,7 +195,7 @@ export async function topCmd(bot, msg) {
 }
 
 export async function settingsCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const cfg = loadConfig();
   await send(bot, msg.chat.id, formatConfigSummary(cfg));
 }
@@ -168,7 +203,6 @@ export async function settingsCmd(bot, msg) {
 // ─── Topic Management ────────────────────────────────────────────────────────
 
 export async function topicsCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
   const cfg = loadConfig();
   if (cfg.topics.length === 0) {
     await bot.sendMessage(msg.chat.id, 'No topics configured. Use /addtopic [name] to add one.');
@@ -182,7 +216,7 @@ export async function topicsCmd(bot, msg) {
 }
 
 export async function addTopicCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const topic = msg.text.replace(/^\/addtopic\s*/i, '').trim();
   if (!topic) {
     await bot.sendMessage(msg.chat.id, 'Usage: /addtopic [name]\nExample: /addtopic Bitcoin');
@@ -194,7 +228,7 @@ export async function addTopicCmd(bot, msg) {
 }
 
 export async function removeTopicCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const topic = msg.text.replace(/^\/removetopic\s*/i, '').trim();
   if (!topic) {
     await bot.sendMessage(msg.chat.id, 'Usage: /removetopic [name]');
@@ -208,7 +242,6 @@ export async function removeTopicCmd(bot, msg) {
 // ─── Alert Management ────────────────────────────────────────────────────────
 
 export async function alertsCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
   const rules = getAllAlertRules();
   if (rules.length === 0) {
     await bot.sendMessage(msg.chat.id, 'No alert rules configured.\n\nUse /addalert [topic] [keyword] to add one.');
@@ -227,7 +260,7 @@ export async function alertsCmd(bot, msg) {
 }
 
 export async function addAlertCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const parts = msg.text.replace(/^\/addalert\s*/i, '').trim().split(/\s+/);
   if (parts.length < 2) {
     await bot.sendMessage(msg.chat.id, 'Usage: /addalert [topic] [keyword]\nExample: /addalert OpenAI gpt-5');
@@ -240,7 +273,7 @@ export async function addAlertCmd(bot, msg) {
 }
 
 export async function removeAlertCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const parts = msg.text.replace(/^\/removealert\s*/i, '').trim().split(/\s+/);
   if (parts.length < 2) {
     await bot.sendMessage(msg.chat.id, 'Usage: /removealert [topic] [keyword]');
@@ -253,7 +286,7 @@ export async function removeAlertCmd(bot, msg) {
 }
 
 export async function setAlertLevelCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const parts = msg.text.replace(/^\/setalertlevel\s*/i, '').trim().split(/\s+/);
   if (parts.length < 2) {
     await bot.sendMessage(msg.chat.id, 'Usage: /setalertlevel [topic] [0.0-1.0]\nExample: /setalertlevel OpenAI 0.8');
@@ -272,7 +305,7 @@ export async function setAlertLevelCmd(bot, msg) {
 // ─── Social Accounts ─────────────────────────────────────────────────────────
 
 export async function addTwitterCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const handle = msg.text.replace(/^\/addtwitter\s*/i, '').trim();
   if (!handle) { await bot.sendMessage(msg.chat.id, 'Usage: /addtwitter @handle'); return; }
   addTwitterAccount(handle);
@@ -280,7 +313,7 @@ export async function addTwitterCmd(bot, msg) {
 }
 
 export async function removeTwitterCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const handle = msg.text.replace(/^\/removetwitter\s*/i, '').trim();
   if (!handle) { await bot.sendMessage(msg.chat.id, 'Usage: /removetwitter @handle'); return; }
   removeTwitterAccount(handle);
@@ -288,7 +321,7 @@ export async function removeTwitterCmd(bot, msg) {
 }
 
 export async function addInstagramCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const user = msg.text.replace(/^\/addinstagram\s*/i, '').trim();
   if (!user) { await bot.sendMessage(msg.chat.id, 'Usage: /addinstagram username'); return; }
   addInstagramAccount(user);
@@ -296,7 +329,7 @@ export async function addInstagramCmd(bot, msg) {
 }
 
 export async function removeInstagramCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const user = msg.text.replace(/^\/removeinstagram\s*/i, '').trim();
   if (!user) { await bot.sendMessage(msg.chat.id, 'Usage: /removeinstagram username'); return; }
   removeInstagramAccount(user);
@@ -304,7 +337,7 @@ export async function removeInstagramCmd(bot, msg) {
 }
 
 export async function addSubredditCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const sub = msg.text.replace(/^\/addsubreddit\s*/i, '').trim();
   if (!sub) { await bot.sendMessage(msg.chat.id, 'Usage: /addsubreddit r/name'); return; }
   addSubreddit(sub);
@@ -312,7 +345,7 @@ export async function addSubredditCmd(bot, msg) {
 }
 
 export async function removeSubredditCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const sub = msg.text.replace(/^\/removesubreddit\s*/i, '').trim();
   if (!sub) { await bot.sendMessage(msg.chat.id, 'Usage: /removesubreddit r/name'); return; }
   removeSubreddit(sub);
@@ -320,7 +353,7 @@ export async function removeSubredditCmd(bot, msg) {
 }
 
 export async function addYoutubeCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const channelId = msg.text.replace(/^\/addyoutube\s*/i, '').trim();
   if (!channelId) {
     await bot.sendMessage(msg.chat.id, 'Usage: /addyoutube [channelId]\n\nFind the channel ID in the YouTube URL:\nyoutube.com/channel/UCxxxxxxxx\n\nExample: /addyoutube UCbmNph6atAoGfqLoCL_duAg');
@@ -331,7 +364,7 @@ export async function addYoutubeCmd(bot, msg) {
 }
 
 export async function removeYoutubeCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const channelId = msg.text.replace(/^\/removeyoutube\s*/i, '').trim();
   if (!channelId) { await bot.sendMessage(msg.chat.id, 'Usage: /removeyoutube [channelId]'); return; }
   removeYoutubeChannel(channelId);
@@ -339,7 +372,6 @@ export async function removeYoutubeCmd(bot, msg) {
 }
 
 export async function feedsCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
   const { CURATED_FEEDS } = await import('../sources/webNews.js');
   const cfg = loadConfig();
 
@@ -363,7 +395,7 @@ export async function feedsCmd(bot, msg) {
 }
 
 export async function addFeedCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const url = msg.text.replace(/^\/addfeed\s*/i, '').trim();
   if (!url || !url.startsWith('http')) {
     await bot.sendMessage(msg.chat.id, 'Usage: /addfeed [rss-url]\nExample: /addfeed https://feeds.bbci.co.uk/news/rss.xml');
@@ -374,7 +406,7 @@ export async function addFeedCmd(bot, msg) {
 }
 
 export async function removeFeedCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const url = msg.text.replace(/^\/removefeed\s*/i, '').trim();
   if (!url) {
     await bot.sendMessage(msg.chat.id, 'Usage: /removefeed [rss-url]\nUse /feeds to see your current list.');
@@ -387,13 +419,13 @@ export async function removeFeedCmd(bot, msg) {
 // ─── Settings ────────────────────────────────────────────────────────────────
 
 export async function sourcesCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const cfg = loadConfig();
   await send(bot, msg.chat.id, formatSourcesList(cfg));
 }
 
 export async function toggleSourceCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const name = msg.text.replace(/^\/togglesource\s*/i, '').trim();
   if (!name) {
     await bot.sendMessage(msg.chat.id, 'Usage: /togglesource [name]\nAvailable: google_news_rss, newsapi, reddit, twitter, instagram, youtube');
@@ -408,7 +440,7 @@ export async function toggleSourceCmd(bot, msg) {
 }
 
 export async function setTimeCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   const time = msg.text.replace(/^\/settime\s*/i, '').trim();
   const match = time.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) {
@@ -427,21 +459,37 @@ export async function setTimeCmd(bot, msg) {
 }
 
 export async function pauseCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   setPaused(true);
   await bot.sendMessage(msg.chat.id, '⏸️ Alerts and digests paused. Send /resume to restart.');
 }
 
 export async function resumeCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
+  if (!adminOnly(bot, msg)) return;
   setPaused(false);
   await bot.sendMessage(msg.chat.id, '▶️ Alerts and digests resumed.');
+}
+
+// ─── Group Registration ───────────────────────────────────────────────────────
+
+export async function registerCmd(bot, msg) {
+  const chatId = String(msg.chat.id);
+  const cfg = registerChat(chatId);
+  const chatName = msg.chat.title || msg.chat.first_name || chatId;
+  const digestTime = `${String(cfg.digest_hour).padStart(2,'0')}:${String(cfg.digest_minute).padStart(2,'0')} UTC`;
+  await bot.sendMessage(msg.chat.id,
+    `✅ *"${chatName}" is now registered!*\n\nThis chat will receive:\n• Daily digest at ${digestTime}\n• Breaking news alerts\n\nUse /unregister to stop.\n_Admins can change the time with /settime HH:MM_`
+  );
+}
+
+export async function unregisterCmd(bot, msg) {
+  unregisterChat(msg.chat.id);
+  await bot.sendMessage(msg.chat.id, '✅ This chat has been unregistered. No more automatic digests or alerts.');
 }
 
 // ─── Memory & History ────────────────────────────────────────────────────────
 
 export async function memoryCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
   const profile = getInterestProfile();
   if (Object.keys(profile).length === 0) {
     await bot.sendMessage(msg.chat.id, '📊 No interest data yet. Use the bot more to build your profile!');
@@ -458,7 +506,6 @@ export async function memoryCmd(bot, msg) {
 }
 
 export async function historyCmd(bot, msg) {
-  if (!isAuthorized(msg)) return;
   const queries = getRecentQueries(5);
   if (queries.length === 0) {
     await bot.sendMessage(msg.chat.id, '📜 No Q&A history yet. Try /ask [question].');

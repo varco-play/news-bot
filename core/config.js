@@ -19,6 +19,7 @@ const DEFAULT_CONFIG = {
   instagram_accounts: [],
   youtube_channels: [], // Channel IDs like UCbmNph6atAoGfqLoCL_duAg
   custom_rss_feeds: [], // User-added RSS feed URLs
+  registered_chats: [], // Chat IDs that receive scheduled digests/alerts
   reddit_subreddits: ['technology', 'MachineLearning'],
   reddit_min_score: 50,
   digest_articles_per_topic: 3,
@@ -142,6 +143,26 @@ export function setDigestTime(hour, minute) {
   const cfg = loadConfig();
   cfg.digest_hour = hour;
   cfg.digest_minute = minute;
+  saveConfig(cfg);
+  return cfg;
+}
+
+export function registerChat(chatId) {
+  const cfg = loadConfig();
+  const id = String(chatId);
+  if (!cfg.registered_chats) cfg.registered_chats = [];
+  if (!cfg.registered_chats.includes(id)) {
+    cfg.registered_chats.push(id);
+    saveConfig(cfg);
+  }
+  return cfg;
+}
+
+export function unregisterChat(chatId) {
+  const cfg = loadConfig();
+  const id = String(chatId);
+  if (!cfg.registered_chats) cfg.registered_chats = [];
+  cfg.registered_chats = cfg.registered_chats.filter(c => c !== id);
   saveConfig(cfg);
   return cfg;
 }
