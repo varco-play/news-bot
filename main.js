@@ -3,6 +3,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { initDb } from './core/db.js';
 import { setupScheduler } from './bot/scheduler.js';
 import { loadConfig, registerChat } from './core/config.js';
+import { chat } from './ai/queryEngine.js';
 import {
   startCmd, helpCmd, digestCmd, newsCmd, askCmd, topCmd, settingsCmd,
   topicsCmd, addTopicCmd, removeTopicCmd,
@@ -82,6 +83,35 @@ for (const [cmd, handler] of Object.entries(commands)) {
     });
   });
 }
+
+// Plain-text message handler — respond conversationally to anything that's not a command
+bot.on('message', async (msg) => {
+  // Ignore commands (they're handled above), non-text, and messages from bots
+  if (!msg.text || msg.text.startsWith('/') || msg.from?.is_bot) return;
+
+  // In groups, only reply if the bot is mentioned or someone is replying to the bot
+  if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+    const botUsername = (await bot.getMe()).username;
+    const mentionedBot = msg.text.toLowerCase().includes(`@${botUsername.toLowerCase()}`);
+    const replyToBot = msg.reply_to_message?.from?.is_bot;
+    if (!mentionedBot && !replyToBot) return;
+  }
+
+  try {
+    // Show typing indicator
+    await bot.sendChatAction(msg.chat.id, 'typing');
+    const message = msg.text.replace(/@\S+/g, '').trim(); // strip @mentions
+    const reply = await chat(message);
+    // Send reply — try markdown, fall back to plain
+    try {
+      await bot.sendMessage(msg.chat.id, reply, { parse_mode: 'Markdown', reply_to_message_id: msg.message_id });
+    } catch {
+      await bot.sendMessage(msg.chat.id, reply, { reply_to_message_id: msg.message_id });
+    }
+  } catch (err) {
+    console.error('Chat handler error:', err.message);
+  }
+});
 
 // Set up scheduled jobs — sends to ALL registered chats
 setupScheduler(bot);

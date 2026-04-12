@@ -10,7 +10,7 @@ import {
 } from '../core/db.js';
 import { ingestTopic, ingestDailyDigest, ingestSocialHighlights } from '../pipeline/ingestion.js';
 import { getBreakingArticles, formatAlert } from '../pipeline/alerting.js';
-import { answerQuestion } from '../ai/queryEngine.js';
+import { answerQuestion, chat } from '../ai/queryEngine.js';
 import { markAlertSent } from '../core/db.js';
 import {
   formatDailyDigest, formatSearchResults, formatSourcesList,
@@ -167,16 +167,16 @@ export async function newsCmd(bot, msg) {
 export async function askCmd(bot, msg) {
   const question = msg.text.replace(/^\/ask(?:@\S+)?\s*/i, '').trim();
   if (!question) {
-    await bot.sendMessage(msg.chat.id, 'Usage: /ask [question]\nExample: /ask What happened with OpenAI?');
+    await bot.sendMessage(msg.chat.id, 'Just ask me anything — e.g. /ask what\'s going on with AI this week?');
     return;
   }
 
-  await bot.sendMessage(msg.chat.id, '🤔 Thinking...');
+  await bot.sendChatAction(msg.chat.id, 'typing');
   try {
-    const { answer } = await answerQuestion(question);
+    const answer = await chat(question);
     await send(bot, msg.chat.id, answer);
   } catch (err) {
-    await bot.sendMessage(msg.chat.id, `❌ Q&A error: ${err.message}`);
+    await bot.sendMessage(msg.chat.id, `Couldn't pull that up right now: ${err.message}`);
   }
 }
 
